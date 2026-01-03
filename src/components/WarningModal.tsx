@@ -17,27 +17,37 @@ const getViolationMessage = (type: string): { title: string; message: string } =
     case 'window_blur':
       return {
         title: 'Window Focus Lost',
-        message: 'You clicked outside the browser window. Please stay focused on the quiz.',
+        message: 'You clicked outside the browser window or switched applications. Please stay focused on the quiz.',
       };
     case 'page_hide':
       return {
         title: 'Page Hidden',
-        message: 'You minimized or hid the browser window.',
+        message: 'You minimized or hid the browser window. This is not allowed during the quiz.',
       };
     case 'devtools_attempt':
       return {
         title: 'Developer Tools Blocked',
-        message: 'Attempting to open developer tools is not allowed.',
+        message: 'Attempting to open developer tools is not allowed during the quiz.',
       };
     case 'view_source_attempt':
       return {
         title: 'View Source Blocked',
-        message: 'Attempting to view page source is not allowed.',
+        message: 'Attempting to view page source is not allowed during the quiz.',
+      };
+    case 'new_tab_attempt':
+      return {
+        title: 'New Tab/Window Detected',
+        message: 'Attempting to open a new tab or window is not allowed during the quiz.',
+      };
+    case 'browser_shortcut':
+      return {
+        title: 'Browser Shortcut Detected',
+        message: 'Using browser shortcuts is not allowed during the quiz.',
       };
     default:
       return {
         title: 'Violation Detected',
-        message: 'A suspicious activity was detected.',
+        message: 'A suspicious activity was detected. This is not allowed during the quiz.',
       };
   }
 };
@@ -69,9 +79,12 @@ export const WarningModal = ({ violationType, warningCount, onContinue }: Warnin
           </p>
         </div>
 
-        <div className="bg-secondary/30 rounded-lg p-3 mb-6">
-          <p className="text-xs text-muted-foreground">
-            Your quiz progress has been reset. Please continue with the quiz following the rules.
+        <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-4 mb-6">
+          <p className="text-sm text-destructive font-medium mb-2">
+            ⚠️ Quiz Reset Required
+          </p>
+          <p className="text-sm text-foreground">
+            Your quiz progress has been reset. You will be redirected to the landing page to start the quiz again.
           </p>
         </div>
 
@@ -81,7 +94,7 @@ export const WarningModal = ({ violationType, warningCount, onContinue }: Warnin
           className="w-full gap-2 bg-warning hover:bg-warning/90 text-warning-foreground"
         >
           <CheckCircle className="w-4 h-4" />
-          I Understand - Start Over
+          I Understand - Return to Landing Page
         </Button>
       </div>
     </div>

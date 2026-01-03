@@ -33,6 +33,11 @@ const getViolationMessage = (type: string): { title: string; message: string } =
         title: 'View Source Blocked',
         message: 'Attempting to view page source is not allowed.',
       };
+    case 'quiz_restart_limit':
+      return {
+        title: 'Quiz Restart Limit Reached',
+        message: 'You have restarted the quiz 3 times. This is not allowed.',
+      };
     default:
       return {
         title: 'Violation Detected',
@@ -53,22 +58,32 @@ export const ViolationModal = ({ violationType, onRestart }: ViolationModalProps
           </div>
         </div>
 
-        <h2 className="text-2xl font-bold text-destructive mb-3">{title}</h2>
-        <p className="text-muted-foreground mb-6">{message}</p>
+        <h2 className="text-2xl font-bold text-destructive mb-3">Account Blocked</h2>
+        <p className="text-muted-foreground mb-4">{message}</p>
 
         <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-4 mb-6">
-          <p className="text-sm text-destructive font-medium">
-            As per the quiz rules, your progress has been reset. You must start over from the beginning.
+          <p className="text-sm text-destructive font-medium mb-2">
+            ⚠️ You have reached 3 warnings
+          </p>
+          <p className="text-sm text-destructive">
+            Your account has been blocked due to repeated violations of quiz rules. 
+            You will not be able to take the quiz until an administrator unblocks your account.
+          </p>
+        </div>
+
+        <div className="bg-secondary/30 rounded-lg p-3 mb-6">
+          <p className="text-xs text-muted-foreground">
+            If you believe this is an error, please contact the administrator.
           </p>
         </div>
 
         <Button
           onClick={onRestart}
           size="lg"
-          className="w-full gap-2 bg-destructive hover:bg-destructive/90"
+          variant="outline"
+          className="w-full gap-2"
         >
-          <RotateCcw className="w-4 h-4" />
-          Restart Quiz
+          Return to Landing Page
         </Button>
       </div>
     </div>

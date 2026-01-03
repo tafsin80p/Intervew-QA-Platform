@@ -280,14 +280,48 @@ DO $$
 BEGIN
   DROP POLICY IF EXISTS "Admins can view settings" ON public.quiz_settings;
   DROP POLICY IF EXISTS "Admins can manage settings" ON public.quiz_settings;
+  DROP POLICY IF EXISTS "Admins can insert settings" ON public.quiz_settings;
+  DROP POLICY IF EXISTS "Admins can update settings" ON public.quiz_settings;
+  DROP POLICY IF EXISTS "Admins can delete settings" ON public.quiz_settings;
+  DROP POLICY IF EXISTS "Admin email can manage settings" ON public.quiz_settings;
 END $$;
 
 -- Quiz settings policies (admin only for security)
+-- Separate policies for SELECT, INSERT, UPDATE, DELETE with proper WITH CHECK
 CREATE POLICY "Admins can view settings" ON public.quiz_settings
   FOR SELECT USING (public.has_role(auth.uid(), 'admin'));
 
-CREATE POLICY "Admins can manage settings" ON public.quiz_settings
-  FOR ALL USING (public.has_role(auth.uid(), 'admin'));
+CREATE POLICY "Admins can insert settings" ON public.quiz_settings
+  FOR INSERT WITH CHECK (public.has_role(auth.uid(), 'admin'));
+
+CREATE POLICY "Admins can update settings" ON public.quiz_settings
+  FOR UPDATE 
+  USING (public.has_role(auth.uid(), 'admin'))
+  WITH CHECK (public.has_role(auth.uid(), 'admin'));
+
+CREATE POLICY "Admins can delete settings" ON public.quiz_settings
+  FOR DELETE USING (public.has_role(auth.uid(), 'admin'));
+
+-- Fallback policy: Allow admin email to manage settings if role check fails
+-- This ensures the specific admin email can always access settings
+CREATE POLICY "Admin email can manage settings" ON public.quiz_settings
+  FOR ALL 
+  USING (
+    EXISTS (
+      SELECT 1 FROM auth.users
+      WHERE id = auth.uid()
+      AND LOWER(TRIM(email)) = 'mohimmolla020@gmail.com'
+    )
+    OR public.has_role(auth.uid(), 'admin')
+  )
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM auth.users
+      WHERE id = auth.uid()
+      AND LOWER(TRIM(email)) = 'mohimmolla020@gmail.com'
+    )
+    OR public.has_role(auth.uid(), 'admin')
+  );
 
 -- Drop existing blocked_users policies (idempotent)
 DO $$ 
@@ -319,4 +353,3 @@ ON CONFLICT (setting_key) DO NOTHING;
 -- ============================================
 -- END OF SCHEMA
 -- ============================================
-

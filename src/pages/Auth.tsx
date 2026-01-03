@@ -4,12 +4,11 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Code2, LogIn, UserPlus, Mail, Lock, User as UserIcon, ArrowLeft, Loader2 } from 'lucide-react';
+import { Code2, LogIn, UserPlus, Mail, Lock, User as UserIcon, ArrowLeft, Loader2, Key } from 'lucide-react';
 import { Separator } from '@/components/ui/separator';
 import { toast } from 'sonner';
 import { z } from 'zod';
-import { ADMIN_EMAIL, isAdminEmail } from '@/constants/admin';
-import type { User, Session } from '@supabase/supabase-js';
+import { ADMIN_EMAIL, isAdminEmail, isAdminSecretKey } from '@/constants/admin';
 
 const authSchema = z.object({
   email: z.string().email('Invalid email address'),
@@ -22,9 +21,10 @@ const Auth = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
+  const [adminSecretKey, setAdminSecretKey] = useState('');
   const [loading, setLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState<string | null>(null);
-  const { signIn, signUp, signInWithOAuth } = useAuth();
+  const { signIn, signUp, signInWithOAuth, isAdmin } = useAuth();
   const navigate = useNavigate();
 
   // Clear all fields when switching between login/signup
@@ -32,6 +32,7 @@ const Auth = () => {
     setEmail('');
     setPassword('');
     setDisplayName('');
+    setAdminSecretKey('');
   }, [isLogin]);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -53,10 +54,21 @@ const Auth = () => {
 
       if (isLogin) {
         const trimmedEmail = email.trim().toLowerCase();
-        const result = await signIn(trimmedEmail, password);
+        const result = await signIn(trimmedEmail, password, adminSecretKey.trim());
         const { error } = result;
         if (error) {
-          if (error.message.includes('Invalid login credentials') || error.message.includes('Invalid login')) {
+          // Check for backend API connection errors
+          if (error.message.includes('Cannot connect to backend API') || 
+              error.message.includes('Failed to fetch') ||
+              error.message.includes('Network error') ||
+              error.message.includes('fetch')) {
+            toast.error('Backend API is not running. Please start the backend server first.', {
+              duration: 6000,
+            });
+            console.error('Backend API Error:', error.message);
+            setLoading(false);
+            return;
+          } else if (error.message.includes('Invalid credentials') || error.message.includes('Invalid login')) {
             // Check if it's the admin email - provide helpful message
             if (isAdminEmail(trimmedEmail)) {
               toast.error('Account not found. Please sign up first or check your password.');
@@ -65,23 +77,35 @@ const Auth = () => {
             }
           } else if (error.message.includes('Email not confirmed')) {
             toast.error('Please check your email and confirm your account');
+          } else if (error.message.includes('Supabase is not configured')) {
+            toast.error('Supabase is not configured. Please check your .env file.');
           } else {
             toast.error(error.message || 'Login failed. Please try again.');
           }
         } else {
-          toast.success('Welcome back!');
-          // Clear any pending quiz - user should see landing page first
-          sessionStorage.removeItem('pendingQuiz');
-          // Always redirect to landing page
-          navigate('/');
+          // Check if admin secret key was used
+          const usedSecretKey = isAdminSecretKey(adminSecretKey.trim());
+          
+          // Wait a moment for admin status to be set in context, then redirect
+          setTimeout(() => {
+            if (usedSecretKey) {
+              toast.success('Welcome back! Admin access granted.');
+              // Redirect to admin dashboard
+              sessionStorage.removeItem('pendingQuiz');
+              navigate('/admin');
+            } else {
+              toast.success('Welcome back!');
+              // Clear any pending quiz - user should see landing page first
+              sessionStorage.removeItem('pendingQuiz');
+              // Redirect to landing page
+              navigate('/');
+            }
+          }, 300);
         }
       } else {
         const trimmedEmail = email.trim().toLowerCase();
-        const result = await signUp(trimmedEmail, password, displayName);
-        const { data, error } = result as { 
-          data: { user: User | null; session: Session | null } | null; 
-          error: { message: string } | null 
-        };
+        const result = await signUp(trimmedEmail, password, displayName, adminSecretKey.trim());
+        const { data, error } = result;
         if (error) {
           if (error.message.includes('already registered') || error.message.includes('User already registered')) {
             toast.error('This email is already registered. Please sign in instead.');
@@ -95,43 +119,60 @@ const Auth = () => {
             toast.error(error.message || 'Failed to create account. Please try again.');
           }
         } else {
-          // Account created successfully
-          if (data?.user) {
-            const userName = displayName || trimmedEmail.split('@')[0];
-            toast.success(`🎉 Account created successfully! Welcome, ${userName}!`, {
-              duration: 5000,
-            });
-            
-            // If email confirmation is required, show message
-            if (!data.session) {
-              toast.info('📧 Please check your email to confirm your account before signing in.', {
-                duration: 6000,
+            // Account created successfully
+            if (data?.user) {
+              const userName = displayName || trimmedEmail.split('@')[0];
+              
+              // Check if admin secret key was used
+              if (isAdminSecretKey(adminSecretKey.trim())) {
+                toast.success(`🎉 Account created successfully! Welcome, ${userName}! Admin access granted.`, {
+                  duration: 5000,
+                });
+              } else {
+                toast.success(`🎉 Account created successfully! Welcome, ${userName}!`, {
+                  duration: 5000,
+                });
+              }
+              
+              // If email confirmation is required, show message
+              if (!data.user.email_confirmed_at) {
+                toast.info('📧 Please check your email to confirm your account before signing in.', {
+                  duration: 6000,
+                });
+                // Switch to login after showing messages
+                setTimeout(() => {
+                  setIsLogin(true);
+                  setEmail(trimmedEmail); // Pre-fill email for convenience
+                }, 4000);
+              } else {
+                // User is automatically signed in
+                const usedSecretKey = isAdminSecretKey(adminSecretKey.trim());
+                if (usedSecretKey) {
+                  toast.success('You are now signed in with admin access!', {
+                    duration: 3000,
+                  });
+                  // Redirect to admin dashboard
+                  sessionStorage.removeItem('pendingQuiz');
+                  navigate('/admin');
+                } else {
+                  toast.success('You are now signed in!', {
+                    duration: 3000,
+                  });
+                  // Clear any pending quiz - user should see landing page first
+                  sessionStorage.removeItem('pendingQuiz');
+                  // Redirect to landing page
+                  navigate('/');
+                }
+              }
+            } else {
+              toast.success('✅ Account creation initiated! Please check your email.', {
+                duration: 5000,
               });
-              // Switch to login after showing messages
               setTimeout(() => {
                 setIsLogin(true);
                 setEmail(trimmedEmail); // Pre-fill email for convenience
-              }, 4000);
-            } else {
-              // User is automatically signed in
-              toast.success('You are now signed in!', {
-                duration: 3000,
-              });
-              
-              // Clear any pending quiz - user should see landing page first
-              sessionStorage.removeItem('pendingQuiz');
-              // Always redirect to landing page
-              navigate('/');
+              }, 3000);
             }
-          } else {
-            toast.success('✅ Account creation initiated! Please check your email.', {
-              duration: 5000,
-            });
-            setTimeout(() => {
-              setIsLogin(true);
-              setEmail(trimmedEmail); // Pre-fill email for convenience
-            }, 3000);
-          }
         }
       }
     } catch (err) {
@@ -246,6 +287,29 @@ const Auth = () => {
                   required
                 />
               </div>
+            </div>
+
+            <div>
+              <Label htmlFor="adminSecretKey" className="text-sm text-muted-foreground">
+                Admin Secret Key (Optional)
+              </Label>
+              <div className="relative mt-1">
+                <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  id="adminSecretKey"
+                  type="text"
+                  placeholder="Enter admin secret key for admin access"
+                  value={adminSecretKey}
+                  onChange={(e) => setAdminSecretKey(e.target.value)}
+                  className="pl-10"
+                  autoComplete="off"
+                  data-lpignore="true"
+                  data-form-type="other"
+                />
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Enter the admin secret key to access the admin dashboard. Any user can become admin by entering the correct secret key.
+              </p>
             </div>
 
             <Button type="submit" className="w-full gap-2" disabled={loading || oauthLoading !== null}>

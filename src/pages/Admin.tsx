@@ -48,6 +48,47 @@ import { toast } from 'sonner';
 type QuizType = 'plugin' | 'theme';
 type DifficultyLevel = 'beginner' | 'intermediate' | 'advanced';
 
+interface SupabaseQuestion {
+  id: string;
+  quiz_type: QuizType;
+  difficulty: DifficultyLevel;
+  question: string;
+  options: string[];
+  correct_answer: number;
+  explanation: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface SupabaseQuizResult {
+  id: string;
+  user_id: string;
+  quiz_type: QuizType;
+  difficulty: DifficultyLevel;
+  score: number;
+  total_questions: number;
+  time_taken_seconds: number;
+  completed_at: string;
+  profiles?: {
+    display_name: string | null;
+    user_id: string;
+  } | null;
+}
+
+interface SupabaseProfile {
+  id: string;
+  user_id: string;
+  display_name: string | null;
+  avatar_url: string | null;
+  email_verified: boolean;
+  is_blocked: boolean;
+  blocked_reason: string | null;
+  blocked_at: string | null;
+  violation_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
 interface Question {
   id: string;
   quiz_type: QuizType;
@@ -178,27 +219,27 @@ const Admin = () => {
 
     setConnectionStatus('checking');
     try {
-      // Try a simple query to check connection - use profiles table as it's more likely to exist
-      // Set a timeout to prevent hanging
+      // Try a simple query to check connection
       const timeoutPromise = new Promise((_, reject) => 
         setTimeout(() => reject(new Error('Connection timeout after 3 seconds')), 3000)
       );
 
       const queryPromise = supabase
-        .from('profiles')
-        .select('id')
-        .limit(1);
+        .from('quiz_settings' as never)
+        .select('setting_value')
+        .eq('setting_key', 'quiz_duration_minutes')
+        .single();
 
-      const result = await Promise.race([queryPromise, timeoutPromise]) as { error?: { message?: string; code?: string } | null; data?: unknown } | Error;
+      const result = await Promise.race([queryPromise, timeoutPromise]) as { data: { setting_value: string } | null; error: unknown } | Error;
 
       if (result && 'error' in result && result.error) {
-        console.error('Connection check error:', result.error);
-        const error = result.error as { code?: string; message?: string };
-        // If it's a permission error, connection is still working
-        if (error.code === 'PGRST301' || error.message?.includes('permission')) {
-          console.log('✅ Supabase connected (permission issue, but connection works)');
+        // If it's a 404, the setting doesn't exist but DB is connected
+        const error = result.error as { message?: string; code?: string };
+        if (error.code === 'PGRST116' || error.message?.includes('not found')) {
+          console.log('✅ Supabase connection successful (setting not found, but DB is accessible)');
           setConnectionStatus('connected');
         } else {
+          console.error('Connection check error:', result.error);
           setConnectionStatus('disconnected');
         }
       } else if (result && 'data' in result) {
@@ -209,7 +250,6 @@ const Admin = () => {
       }
     } catch (err) {
       console.error('Connection check failed:', err);
-      // If timeout, mark as disconnected
       const error = err as Error;
       if (error?.message?.includes('timeout')) {
         console.error('Connection check timed out - Supabase may be unreachable');
@@ -283,18 +323,24 @@ const Admin = () => {
 
       if (error) {
         console.error('Error fetching questions:', error);
-        console.error('Error details:', {
-          message: error.message,
-          code: error.code,
-          details: error.details,
-          hint: error.hint,
-        });
         toast.error(`Failed to load questions: ${error.message}`);
         setQuestions([]);
       } else {
-        console.log(`Successfully loaded ${data?.length || 0} questions from database`);
-        setQuestions((data as Question[]) || []);
-        if (!data || data.length === 0) {
+        // Convert Supabase format to local format
+        const questionsData = data as SupabaseQuestion[] | null;
+        const convertedQuestions: Question[] = (questionsData || []).map((q: SupabaseQuestion) => ({
+          id: q.id,
+          quiz_type: q.quiz_type,
+          difficulty: q.difficulty,
+          question: q.question,
+          options: q.options as string[],
+          correct_answer: q.correct_answer,
+          explanation: q.explanation || null,
+        }));
+        
+        console.log(`Successfully loaded ${convertedQuestions.length} questions from database`);
+        setQuestions(convertedQuestions);
+        if (convertedQuestions.length === 0) {
           toast.info('No questions found in database. Using static questions.');
         }
       }
@@ -318,50 +364,51 @@ const Admin = () => {
 
     try {
       console.log('Fetching settings from Supabase...');
-      const { data, error } = await supabase
+      
+      // Fetch all settings at once
+      const { data: settingsData, error } = await supabase
         .from('quiz_settings' as never)
-        .select('setting_key, setting_value') as { data: QuizSetting[] | null; error: { message: string; code?: string; details?: string; hint?: string } | null };
+        .select('setting_key, setting_value')
+        .in('setting_key', [
+          'quiz_duration_minutes',
+          'landing_logo_url',
+          'smtp_host',
+          'smtp_port',
+          'smtp_secure',
+          'smtp_username',
+          'smtp_password',
+          'smtp_from_email',
+          'smtp_from_name'
+        ]);
 
       if (error) {
         console.error('Error fetching settings:', error);
-        console.error('Error details:', {
-          message: error.message,
-          code: error.code,
-          details: error.details,
-          hint: error.hint,
-        });
-        toast.error(`Failed to load settings: ${error.message}`);
         setQuizDuration(20);
         setLogoUrl('');
         return;
       }
 
-      console.log(`Successfully loaded ${data?.length || 0} settings from database`);
-
-      const configMap = new Map((data || []).map((s) => [s.setting_key, s.setting_value]));
-
-      const durationSetting = (data || []).find((s) => s.setting_key === 'quiz_duration_minutes');
-      if (durationSetting) {
-        setQuizDuration(parseInt(durationSetting.setting_value) || 20);
-      } else {
-        setQuizDuration(20);
+      interface SettingRow {
+        setting_key: string;
+        setting_value: string;
       }
+      const settingsMap = new Map((settingsData || []).map((s: SettingRow) => [s.setting_key, s.setting_value]));
 
-      const logoSetting = (data || []).find((s) => s.setting_key === 'landing_logo_url');
-      if (logoSetting) {
-        setLogoUrl(logoSetting.setting_value || '');
-      } else {
-        setLogoUrl('');
-      }
+      const getSettingValue = (key: string): string => {
+        return settingsMap.get(key) || '';
+      };
+
+      setQuizDuration(parseInt(getSettingValue('quiz_duration_minutes')) || 20);
+      setLogoUrl(getSettingValue('landing_logo_url'));
 
       // Load SMTP settings
-      setSmtpHost(configMap.get('smtp_host') || '');
-      setSmtpPort(parseInt(configMap.get('smtp_port') || '587'));
-      setSmtpSecure(configMap.get('smtp_secure') === 'true');
-      setSmtpUsername(configMap.get('smtp_username') || '');
-      setSmtpPassword(configMap.get('smtp_password') || '');
-      setSmtpFromEmail(configMap.get('smtp_from_email') || '');
-      setSmtpFromName(configMap.get('smtp_from_name') || 'WordPress Quiz');
+      setSmtpHost(getSettingValue('smtp_host'));
+      setSmtpPort(parseInt(getSettingValue('smtp_port') || '587'));
+      setSmtpSecure(getSettingValue('smtp_secure') === 'true');
+      setSmtpUsername(getSettingValue('smtp_username'));
+      setSmtpPassword(getSettingValue('smtp_password'));
+      setSmtpFromEmail(getSettingValue('smtp_from_email'));
+      setSmtpFromName(getSettingValue('smtp_from_name') || 'WordPress Quiz');
     } catch (err) {
       console.error('Error fetching settings:', err);
       const error = err as Error;
@@ -384,40 +431,39 @@ const Admin = () => {
       console.log('Fetching results from Supabase...');
       const { data: resultsData, error } = await supabase
         .from('quiz_results')
-        .select('*')
+        .select(`
+          *,
+          profiles!quiz_results_user_id_fkey (
+            display_name,
+            user_id
+          )
+        `)
         .order('completed_at', { ascending: false })
         .limit(100);
 
       if (error) {
         console.error('Error fetching results:', error);
-        console.error('Error details:', {
-          message: error.message,
-          code: error.code,
-          details: error.details,
-          hint: error.hint,
-        });
         toast.error(`Failed to load results: ${error.message}`);
         setResultsLoading(false);
         return;
       }
 
-      console.log(`Successfully loaded ${resultsData?.length || 0} results from database`);
-
-      // Fetch user profiles
-      const userIds = [...new Set((resultsData || []).map(r => r.user_id))];
-      const { data: profiles } = await supabase
-        .from('profiles')
-        .select('user_id, display_name')
-        .in('user_id', userIds);
-
-      const profileMap = new Map(profiles?.map(p => [p.user_id, p.display_name]) || []);
-
-      const resultsWithNames: QuizResult[] = (resultsData || []).map(r => ({
-        ...r,
-        display_name: profileMap.get(r.user_id) || null,
+      // Convert Supabase format to local format
+      const resultsArray = resultsData as unknown as SupabaseQuizResult[] | null;
+      const convertedResults: QuizResult[] = (resultsArray || []).map((r: SupabaseQuizResult) => ({
+        id: r.id,
+        user_id: r.user_id,
+        quiz_type: r.quiz_type,
+        difficulty: r.difficulty,
+        score: r.score,
+        total_questions: r.total_questions,
+        time_taken_seconds: r.time_taken_seconds,
+        completed_at: r.completed_at,
+        display_name: (r.profiles as { display_name?: string | null } | null)?.display_name || null,
       }));
 
-      setResults(resultsWithNames);
+      console.log(`Successfully loaded ${convertedResults.length} results from database`);
+      setResults(convertedResults);
     } catch (err) {
       console.error('Exception fetching results:', err);
       const error = err as Error;
@@ -472,35 +518,60 @@ const Admin = () => {
       return;
     }
 
+    if (!isSupabaseConfigured) {
+      toast.error('Supabase is not configured. Please set up your .env file.');
+      return;
+    }
+
     setSavingSMTP(true);
     try {
       const settings = [
-        { setting_key: 'smtp_host', setting_value: smtpHost },
-        { setting_key: 'smtp_port', setting_value: smtpPort.toString() },
-        { setting_key: 'smtp_secure', setting_value: smtpSecure.toString() },
-        { setting_key: 'smtp_username', setting_value: smtpUsername },
-        { setting_key: 'smtp_password', setting_value: smtpPassword },
-        { setting_key: 'smtp_from_email', setting_value: smtpFromEmail },
-        { setting_key: 'smtp_from_name', setting_value: smtpFromName },
+        { key: 'smtp_host', value: smtpHost.trim() },
+        { key: 'smtp_port', value: smtpPort.toString() },
+        { key: 'smtp_secure', value: smtpSecure.toString() },
+        { key: 'smtp_username', value: smtpUsername.trim() },
+        { key: 'smtp_password', value: smtpPassword },
+        { key: 'smtp_from_email', value: smtpFromEmail.trim() },
+        { key: 'smtp_from_name', value: smtpFromName.trim() || 'WordPress Quiz' },
       ];
 
       const promises = settings.map(setting =>
-        supabase.from('quiz_settings' as never).upsert(setting as never, { onConflict: 'setting_key' } as never)
+        supabase
+          .from('quiz_settings' as never)
+          .upsert({
+            setting_key: setting.key,
+            setting_value: setting.value,
+          } as never)
       );
 
       const results = await Promise.all(promises);
-      const hasError = results.some(r => r.error);
+      
+      // Check for errors and log them
+      const errors: string[] = [];
+      results.forEach((result, index) => {
+        if (result.error) {
+          const settingKey = settings[index].key;
+          const errorMessage = (result.error as { message?: string }).message || 'Unknown error';
+          console.error(`Failed to save ${settingKey}:`, result.error);
+          errors.push(`${settingKey}: ${errorMessage}`);
+        }
+      });
 
-      if (hasError) {
-        toast.error('Failed to save SMTP configuration');
+      if (errors.length > 0) {
+        console.error('SMTP save errors:', errors);
+        // Show the first meaningful error
+        const firstError = errors.find(e => !e.includes(':')) || errors[0];
+        toast.error(`Failed to save SMTP configuration: ${firstError}`);
       } else {
-        toast.success('SMTP configuration saved!');
+        toast.success('SMTP configuration saved successfully!');
       }
     } catch (err) {
       console.error('Error saving SMTP config:', err);
-      toast.error('Failed to save SMTP configuration');
+      const error = err as Error;
+      toast.error(`Failed to save SMTP configuration: ${error.message || 'Unknown error'}`);
+    } finally {
+      setSavingSMTP(false);
     }
-    setSavingSMTP(false);
   };
 
   const testSMTP = async () => {
@@ -512,7 +583,7 @@ const Admin = () => {
     setTestingEmail(true);
     try {
       // Note: This requires a backend API endpoint at /api/send-email
-      // You'll need to create this endpoint using Supabase Edge Functions or a separate backend
+      // You'll need to create this endpoint using a backend API (e.g., Express, Node.js)
       toast.info('SMTP test requires a backend API endpoint. Please configure /api/send-email endpoint.');
     } catch (err) {
       console.error('Error testing SMTP:', err);
@@ -522,33 +593,69 @@ const Admin = () => {
   };
 
   const fetchUsers = async () => {
+    if (!isSupabaseConfigured) {
+      console.warn('Supabase not configured - cannot load users');
+      setUsersLoading(false);
+      return;
+    }
+
     setUsersLoading(true);
     try {
-      const { data: profilesData, error: profilesError } = await supabase
+      const { data: usersData, error } = await supabase
         .from('profiles')
-        .select('*')
+        .select(`
+          *,
+          auth.users!profiles_user_id_fkey (
+            email,
+            email_confirmed_at
+          )
+        `)
         .order('created_at', { ascending: false });
 
-      if (profilesError) {
-        toast.error('Failed to load users');
+      if (error) {
+        console.error('Failed to load users:', error);
+        toast.error(`Failed to load users: ${error.message}`);
         setUsersLoading(false);
         return;
       }
 
-      // Note: Getting user emails requires admin access
-      // For now, we'll show what we can from profiles
-      // Cast to UserProfile since the database has additional fields not in the type definition
-      setUsers((profilesData || []) as UserProfile[]);
+      if (!usersData) {
+        console.warn('No data returned from profiles');
+        toast.warning('No users found or data not available');
+        setUsers([]);
+        setUsersLoading(false);
+        return;
+      }
+
+      // Convert Supabase format to local format
+      const convertedUsers: UserProfile[] = (usersData as unknown as SupabaseProfile[]).map((u: SupabaseProfile) => ({
+        id: u.id,
+        user_id: u.user_id,
+        display_name: u.display_name || null,
+        avatar_url: u.avatar_url || undefined,
+        email_verified: u.email_verified || false,
+        is_blocked: u.is_blocked || false,
+        blocked_reason: u.blocked_reason || null,
+        blocked_at: u.blocked_at || null,
+        violation_count: u.violation_count || 0,
+        created_at: u.created_at,
+        updated_at: u.updated_at,
+      }));
+
+      console.log(`✅ Loaded ${convertedUsers.length} users`);
+      setUsers(convertedUsers);
     } catch (err) {
       console.error('Error fetching users:', err);
-      toast.error('Failed to load users');
+      const error = err as Error;
+      toast.error(`Failed to load users: ${error.message || 'Unknown error'}`);
+    } finally {
+      setUsersLoading(false);
     }
-    setUsersLoading(false);
   };
 
   const blockUser = async (userId: string, reason: string) => {
     try {
-      const { error: profileError } = await supabase
+      const { error: updateError } = await supabase
         .from('profiles')
         .update({
           is_blocked: true,
@@ -557,23 +664,20 @@ const Admin = () => {
         } as never)
         .eq('user_id', userId);
 
-      if (profileError) {
-        toast.error('Failed to block user');
-        return;
+      if (!updateError) {
+        await supabase
+          .from('blocked_users' as never)
+          .insert({
+            user_id: userId,
+            reason,
+          } as never);
       }
 
-      // Record in blocked_users table
-      const { error: blockError } = await supabase
-        .from('blocked_users' as never)
-        .insert({
-          user_id: userId,
-          reason,
-          violation_type: 'cheating',
-          blocked_by: user?.id,
-        } as never);
+      const { error } = { error: updateError };
 
-      if (blockError) {
-        console.error('Error recording block:', blockError);
+      if (error) {
+        toast.error('Failed to block user');
+        return;
       }
 
       toast.success('User blocked successfully');
@@ -586,7 +690,7 @@ const Admin = () => {
 
   const unblockUser = async (userId: string) => {
     try {
-      const { error: profileError } = await supabase
+      const { error } = await supabase
         .from('profiles')
         .update({
           is_blocked: false,
@@ -595,23 +699,9 @@ const Admin = () => {
         } as never)
         .eq('user_id', userId);
 
-      if (profileError) {
+      if (error) {
         toast.error('Failed to unblock user');
         return;
-      }
-
-      // Update blocked_users table
-      const { error: unblockError } = await supabase
-        .from('blocked_users' as never)
-        .update({
-          unblocked_at: new Date().toISOString(),
-          unblocked_by: user?.id,
-        } as never)
-        .eq('user_id', userId)
-        .is('unblocked_at', null);
-
-      if (unblockError) {
-        console.error('Error recording unblock:', unblockError);
       }
 
       toast.success('User unblocked successfully');
@@ -644,6 +734,10 @@ const Admin = () => {
   };
 
   const handleSave = async () => {
+    if (!isSupabaseConfigured) {
+      toast.error('Supabase is not configured. Please set up your .env file.');
+      return;
+    }
     if (!formQuestion.trim() || formOptions.some(o => !o.trim())) {
       toast.error('Please fill in all fields');
       return;
@@ -660,33 +754,43 @@ const Admin = () => {
       explanation: formExplanation || null,
     };
 
-    if (editingQuestion) {
-      const { error } = await supabase
-        .from('questions')
-        .update(questionData)
-        .eq('id', editingQuestion.id);
+    try {
+      if (editingQuestion) {
+        const { error } = await supabase
+          .from('questions')
+          .update(questionData as never)
+          .eq('id', editingQuestion.id);
 
-      if (error) {
-        toast.error('Failed to update question');
+        if (error) {
+          console.error('Failed to update question:', error);
+          toast.error(`Failed to update question: ${error.message}`);
+        } else {
+          console.log('✅ Question updated successfully');
+          toast.success('Question updated!');
+          setDialogOpen(false);
+          resetForm();
+          fetchQuestions();
+        }
       } else {
-        toast.success('Question updated!');
-        setDialogOpen(false);
-        resetForm();
-        fetchQuestions();
-      }
-    } else {
-      const { error } = await supabase
-        .from('questions')
-        .insert(questionData);
+        const { error } = await supabase
+          .from('questions')
+          .insert(questionData as never);
 
-      if (error) {
-        toast.error('Failed to create question');
-      } else {
-        toast.success('Question created!');
-        setDialogOpen(false);
-        resetForm();
-        fetchQuestions();
+        if (error) {
+          console.error('Failed to create question:', error);
+          toast.error(`Failed to create question: ${error.message}`);
+        } else {
+          console.log('✅ Question created successfully');
+          toast.success('Question created!');
+          setDialogOpen(false);
+          resetForm();
+          fetchQuestions();
+        }
       }
+    } catch (err) {
+      console.error('Error saving question:', err);
+      const error = err as Error;
+      toast.error(`Failed to save question: ${error.message || 'Unknown error'}`);
     }
 
     setSaving(false);

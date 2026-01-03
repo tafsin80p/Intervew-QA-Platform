@@ -30,7 +30,7 @@
 - ✅ **Session Management** - Persistent login state
 
 ### Admin Dashboard
-- ✅ **Admin Access** - Restricted to: `softvenceomega@gmail.com`
+- ✅ **Admin Access** - Restricted to: `mohimmolla020@gmail.com`
 - ✅ **Question Management** - CRUD operations for questions
 - ✅ **Quiz Settings** - Configure quiz duration
 - ✅ **Logo Management** - Upload/change landing page logo
@@ -83,7 +83,7 @@
 - ✅ **Status:** Configured and validated
 
 ### Admin Credentials
-- **Email:** `softvenceomega@gmail.com`
+- **Email:** `mohimmolla020@gmail.com`
 - **Password:** `Wordpress@2026`
 - **Access:** Admin dashboard, question management, user management
 

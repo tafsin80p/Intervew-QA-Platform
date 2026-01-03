@@ -8,7 +8,7 @@ import { WarningModal } from '@/components/WarningModal';
 import { ResultsPage } from '@/components/ResultsPage';
 import { useAntiCheat } from '@/hooks/useAntiCheat';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase, isSupabaseConfigured } from '@/integrations/supabase/client';
+import { quizAPI, adminAPI, authAPI } from '@/lib/api';
 import { wordpressQuestions } from '@/data/questions';
 import { themeQuestions } from '@/data/themeQuestions';
 import { Question } from '@/data/questions';
@@ -16,16 +16,6 @@ import { Puzzle, Palette, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 type QuizState = 'landing' | 'quiz' | 'violation' | 'warning' | 'results';
-
-interface DbQuestion {
-  id: string;
-  quiz_type: QuizType;
-  difficulty: DifficultyLevel;
-  question: string;
-  options: string[];
-  correct_answer: number;
-  explanation: string | null;
-}
 
 const Index = () => {
   const { user, loading: authLoading } = useAuth();
@@ -42,81 +32,50 @@ const Index = () => {
   const [showWarning, setShowWarning] = useState(false);
   const startTimeRef = useRef<number>(0);
 
+  // Create a ref to store reset function
+  const resetViolationRef = useRef<(() => void) | null>(null);
+
   const handleViolation = useCallback(async (type: string) => {
-    setViolationType(type);
-    
-    if (user && isSupabaseConfigured) {
-      try {
-        // Get current violation/warning count
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('violation_count')
-          .eq('user_id', user.id)
-          .single() as { data: { violation_count?: number } | null; error: unknown };
+    if (!user) {
+      // If not logged in, just show warning and reset
+      setViolationType(type);
+      setWarningCount(1);
+      setShowWarning(true);
+      setQuizState('warning');
+      return;
+    }
 
-        const currentViolationCount = (profile as { violation_count?: number } | null)?.violation_count || 0;
-        const newViolationCount = currentViolationCount + 1;
+    try {
+      // Get current warning count from API
+      const warningData = await adminAPI.getUserWarnings(user.id);
+      const currentWarningCount = warningData.warningCount || 0;
+      const newWarningCount = currentWarningCount + 1;
 
-        // Update violation count
-        await supabase
-          .from('profiles')
-          .update({
-            violation_count: newViolationCount,
-          } as never)
-          .eq('user_id', user.id);
+      // Update warning count
+      await adminAPI.updateUserWarnings(user.id, newWarningCount);
 
-        // If this is the 4th violation (after 3 warnings), block the user
-        if (newViolationCount >= 4) {
-          const reason = `Cheating detected: ${type} (Multiple violations)`;
-          
-          // Block user
-          const { error: updateError } = await supabase
-            .from('profiles')
-            .update({
-              is_blocked: true,
-              blocked_reason: reason,
-              blocked_at: new Date().toISOString(),
-            } as never)
-            .eq('user_id', user.id);
+      // If this is the 3rd warning, ban the user
+      if (newWarningCount >= 3) {
+        const reason = `Cheating detected: ${type} (3 warnings reached)`;
+        
+        // Ban user
+        await adminAPI.blockUser(user.id, reason);
 
-          if (!updateError) {
-            // Record in blocked_users table
-            await supabase
-              .from('blocked_users' as never)
-              .insert({
-                user_id: user.id,
-                reason,
-                violation_type: type,
-              } as never);
-
-            // Send notification email if configured
-            if (user.email) {
-              try {
-                const { sendBlockedNotificationEmail } = await import('@/lib/email');
-                await sendBlockedNotificationEmail(user.email, reason);
-              } catch (emailError) {
-                console.error('Error sending block notification email:', emailError);
-              }
-            }
-          }
-
-          // Show blocking modal
-          setQuizState('violation');
-        } else {
-          // Show warning (1st, 2nd, or 3rd violation)
-          setWarningCount(newViolationCount);
-          setShowWarning(true);
-          setQuizState('warning');
-        }
-      } catch (err) {
-        console.error('Error handling violation:', err);
-        // Fallback: show warning if database error
-        setWarningCount(1);
-        setShowWarning(true);
-        setQuizState('warning');
+        // Show blocking modal
+        setQuizState('violation');
+        setViolationType(type);
+        return;
       }
-    } else {
-      // If not logged in or Supabase not configured, just show warning
+
+      // Show warning modal for 1st or 2nd warning
+      setViolationType(type);
+      setWarningCount(newWarningCount);
+      setShowWarning(true);
+      setQuizState('warning');
+    } catch (error) {
+      console.error('Error handling violation:', error);
+      // Fallback: show warning if API error
+      setViolationType(type);
       setWarningCount(1);
       setShowWarning(true);
       setQuizState('warning');
@@ -128,33 +87,15 @@ const Index = () => {
     enabled: quizState === 'quiz',
   });
 
+  // Store reset function in ref
+  useEffect(() => {
+    resetViolationRef.current = resetViolation;
+  }, [resetViolation]);
+
   const fetchDbQuestions = useCallback(async (type: QuizType, diff: DifficultyLevel): Promise<Question[]> => {
-    if (!isSupabaseConfigured) {
-      return [];
-    }
-
-    try {
-      const { data, error } = await supabase
-        .from('questions')
-        .select('*')
-        .eq('quiz_type', type)
-        .eq('difficulty', diff);
-
-      if (error || !data || data.length === 0) {
-        return [];
-      }
-
-      return (data as DbQuestion[]).map((q) => ({
-        id: parseInt(q.id.replace(/-/g, '').substring(0, 8), 16) || Math.random(), // Convert UUID to number for compatibility
-        question: q.question,
-        options: q.options,
-        correctAnswer: q.correct_answer,
-        explanation: q.explanation || '',
-      }));
-    } catch (err) {
-      console.error('Error fetching questions from database:', err);
-      return [];
-    }
+    // Since we're using Express API now, skip Supabase and use static questions
+    // This prevents infinite loading issues
+    return [];
   }, []);
 
   const getFallbackQuestions = useCallback((type: QuizType): Question[] => {
@@ -174,30 +115,26 @@ const Index = () => {
     setDifficulty(diff);
     setLoadingQuestions(true);
 
-    // Try to fetch questions from database first
-    const dbQuestions = await fetchDbQuestions(type, diff);
-    
-    let quizQuestions: Question[];
-    if (dbQuestions.length >= 5) {
-      quizQuestions = dbQuestions;
-    } else {
-      // Fall back to static questions
-      quizQuestions = getFallbackQuestions(type);
-      if (!isSupabaseConfigured) {
-        // Supabase not configured - use static questions only
-        console.log(`Using static questions: ${quizQuestions.length} questions for ${type} quiz`);
-      } else if (dbQuestions.length > 0) {
-        toast.info(`Using ${dbQuestions.length} custom questions + ${quizQuestions.length} default questions`);
-      }
+    // Use static questions immediately (no database fetch to prevent loading issues)
+    // Load questions synchronously to avoid any async delays
+    try {
+      const quizQuestions = getFallbackQuestions(type);
+      setQuestions(quizQuestions);
+      setAnswers(new Array(quizQuestions.length).fill(null));
+      setCurrentQuestion(0);
+      startTimeRef.current = Date.now();
+      
+      // Use requestAnimationFrame to ensure state updates happen smoothly
+      requestAnimationFrame(() => {
+        setLoadingQuestions(false);
+        setQuizState('quiz');
+      });
+    } catch (error) {
+      console.error('Error starting quiz:', error);
+      toast.error('Failed to start quiz. Please try again.');
+      setLoadingQuestions(false);
     }
-
-    setQuestions(quizQuestions);
-    setAnswers(new Array(quizQuestions.length).fill(null));
-    setCurrentQuestion(0);
-    startTimeRef.current = Date.now();
-    setLoadingQuestions(false);
-    setQuizState('quiz');
-  }, [user, fetchDbQuestions, getFallbackQuestions]);
+  }, [user, getFallbackQuestions]);
 
   // Removed auto-start feature - users should always see landing page after login
   // They can then manually start the quiz from the landing page
@@ -298,15 +235,71 @@ const Index = () => {
     };
   }, [quizState]);
 
-  const handleRestart = () => {
-    resetViolation();
-    setQuizState('landing');
-    setCurrentQuestion(0);
-    setAnswers([]);
-    setViolationType('');
-    setWarningCount(0);
-    setShowWarning(false);
-    setQuestions([]);
+  const handleRestart = async () => {
+    if (!user) {
+      // If not logged in, just restart
+      resetViolation();
+      setQuizState('landing');
+      setCurrentQuestion(0);
+      setAnswers([]);
+      setViolationType('');
+      setWarningCount(0);
+      setShowWarning(false);
+      setQuestions([]);
+      return;
+    }
+
+    try {
+      // Get current restart count
+      const restartData = await adminAPI.getUserRestartCount(user.id);
+      const currentRestartCount = restartData.restartCount || 0;
+      const newRestartCount = currentRestartCount + 1;
+
+      // Update restart count
+      await adminAPI.updateUserRestartCount(user.id, newRestartCount);
+
+      // If this is the 3rd restart, ban the user
+      if (newRestartCount >= 3) {
+        const reason = `Quiz restarted 3 times (${newRestartCount} restarts)`;
+        
+        // Ban user
+        await adminAPI.blockUser(user.id, reason);
+
+        // Show blocking modal
+        toast.error('You have restarted the quiz 3 times. Your account has been blocked.');
+        setQuizState('violation');
+        setViolationType('quiz_restart_limit');
+        return;
+      }
+
+      // Show warning for 1st or 2nd restart
+      if (newRestartCount === 1) {
+        toast.warning('First restart. You have 2 restarts remaining.');
+      } else if (newRestartCount === 2) {
+        toast.warning('Second restart. This is your last restart. Next restart will result in a ban.');
+      }
+
+      // Reset quiz state
+      resetViolation();
+      setQuizState('landing');
+      setCurrentQuestion(0);
+      setAnswers([]);
+      setViolationType('');
+      setWarningCount(0);
+      setShowWarning(false);
+      setQuestions([]);
+    } catch (error) {
+      console.error('Error tracking restart:', error);
+      // Fallback: just restart if API error
+      resetViolation();
+      setQuizState('landing');
+      setCurrentQuestion(0);
+      setAnswers([]);
+      setViolationType('');
+      setWarningCount(0);
+      setShowWarning(false);
+      setQuestions([]);
+    }
   };
 
   const handleSelectAnswer = (answerIndex: number) => {
@@ -331,28 +324,38 @@ const Index = () => {
     const timeTaken = Math.floor((Date.now() - startTimeRef.current) / 1000);
     const score = questions.filter((q, i) => answers[i] === q.correctAnswer).length;
 
-    // Save results if user is logged in and Supabase is configured
-    if (user && isSupabaseConfigured) {
+    // Calculate detailed answers (correct/wrong for each question)
+    const detailedAnswers = questions.map((q, i) => ({
+      questionId: q.id,
+      question: q.question,
+      userAnswer: answers[i] ?? null,
+      correctAnswer: q.correctAnswer,
+      isCorrect: answers[i] === q.correctAnswer,
+      options: q.options,
+    }));
+
+    const correctAnswers = detailedAnswers.filter(a => a.isCorrect).length;
+    const wrongAnswers = detailedAnswers.filter(a => !a.isCorrect && a.userAnswer !== null).length;
+
+    // Save results to Express API
+    if (user) {
       try {
-        const { error } = await supabase.from('quiz_results').insert({
-          user_id: user.id,
-          quiz_type: quizType,
+        await quizAPI.submit({
+          quizType: quizType,
           difficulty: difficulty,
           score: score,
-          total_questions: questions.length,
-          time_taken_seconds: timeTaken,
+          totalQuestions: questions.length,
+          correctAnswers: correctAnswers,
+          wrongAnswers: wrongAnswers,
+          timeTakenSeconds: timeTaken,
+          detailedAnswers: detailedAnswers,
         });
-
-        if (error) {
-          console.error('Failed to save results:', error);
-        } else {
-          toast.success('Score saved to leaderboard!');
-        }
-      } catch (err) {
+        console.log('✅ Quiz results saved to backend');
+        toast.success('Quiz results saved successfully!');
+      } catch (err: any) {
         console.error('Error saving results:', err);
+        toast.error(err.message || 'Failed to save quiz results');
       }
-    } else if (user && !isSupabaseConfigured) {
-      console.warn('Supabase not configured - results not saved');
     }
 
     setQuizState('results');
@@ -392,8 +395,20 @@ const Index = () => {
         violationType={violationType}
         warningCount={warningCount}
         onContinue={() => {
+          // Reset violation flag
+          if (resetViolationRef.current) {
+            resetViolationRef.current();
+          }
+          // Show toast message
+          toast.error('Quiz has been reset due to violation. Please start again from the landing page.');
+          // Redirect to landing page
           setShowWarning(false);
-          handleRestart();
+          setQuizState('landing');
+          setCurrentQuestion(0);
+          setAnswers([]);
+          setViolationType('');
+          setWarningCount(0);
+          setQuestions([]);
         }}
       />
     );
@@ -403,7 +418,19 @@ const Index = () => {
     return (
       <ViolationModal
         violationType={violationType}
-        onRestart={handleRestart}
+        onRestart={() => {
+          // Reset everything and go to landing page
+          if (resetViolationRef.current) {
+            resetViolationRef.current();
+          }
+          setQuizState('landing');
+          setCurrentQuestion(0);
+          setAnswers([]);
+          setViolationType('');
+          setWarningCount(0);
+          setShowWarning(false);
+          setQuestions([]);
+        }}
       />
     );
   }
