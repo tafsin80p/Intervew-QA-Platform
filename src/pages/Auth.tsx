@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { supabase, isSupabaseConfigured } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -10,12 +11,6 @@ import { toast } from 'sonner';
 import { z } from 'zod';
 import { ADMIN_EMAIL, isAdminEmail, isAdminSecretKey } from '@/constants/admin';
 
-const authSchema = z.object({
-  email: z.string().email('Invalid email address'),
-  password: z.string().min(6, 'Password must be at least 6 characters'),
-  displayName: z.string().min(2, 'Display name must be at least 2 characters').optional(),
-});
-
 const Auth = () => {
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
@@ -24,8 +19,46 @@ const Auth = () => {
   const [adminSecretKey, setAdminSecretKey] = useState('');
   const [loading, setLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState<string | null>(null);
+  const [authSettings, setAuthSettings] = useState({
+    signupEnabled: true,
+    minPasswordLength: 6,
+    requireEmailConfirmation: false,
+    oauthGoogleEnabled: true,
+    oauthGithubEnabled: true,
+  });
   const { signIn, signUp, signInWithOAuth, isAdmin } = useAuth();
   const navigate = useNavigate();
+
+  // Fetch auth settings
+  useEffect(() => {
+    const fetchAuthSettings = async () => {
+      if (!isSupabaseConfigured) {
+        return;
+      }
+
+      try {
+        const settings = await Promise.all([
+          supabase.from('quiz_settings' as never).select('setting_value').eq('setting_key', 'auth_signup_enabled').single(),
+          supabase.from('quiz_settings' as never).select('setting_value').eq('setting_key', 'auth_min_password_length').single(),
+          supabase.from('quiz_settings' as never).select('setting_value').eq('setting_key', 'auth_require_email_confirmation').single(),
+          supabase.from('quiz_settings' as never).select('setting_value').eq('setting_key', 'auth_oauth_google_enabled').single(),
+          supabase.from('quiz_settings' as never).select('setting_value').eq('setting_key', 'auth_oauth_github_enabled').single(),
+        ]);
+
+        setAuthSettings({
+          signupEnabled: settings[0].data?.setting_value !== 'false',
+          minPasswordLength: parseInt(settings[1].data?.setting_value || '6', 10),
+          requireEmailConfirmation: settings[2].data?.setting_value === 'true',
+          oauthGoogleEnabled: settings[3].data?.setting_value !== 'false',
+          oauthGithubEnabled: settings[4].data?.setting_value !== 'false',
+        });
+      } catch (err) {
+        console.error('Error fetching auth settings:', err);
+      }
+    };
+
+    fetchAuthSettings();
+  }, []);
 
   // Clear all fields when switching between login/signup
   useEffect(() => {
@@ -35,12 +68,27 @@ const Auth = () => {
     setAdminSecretKey('');
   }, [isLogin]);
 
+  // If signup is disabled and user tries to sign up, redirect to login
+  useEffect(() => {
+    if (!authSettings.signupEnabled && !isLogin) {
+      setIsLogin(true);
+      toast.error('Signup is currently disabled');
+    }
+  }, [authSettings.signupEnabled, isLogin]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
 
     try {
-      const validation = authSchema.safeParse({
+      // Dynamic schema based on settings
+      const dynamicAuthSchema = z.object({
+        email: z.string().email('Invalid email address'),
+        password: z.string().min(authSettings.minPasswordLength, `Password must be at least ${authSettings.minPasswordLength} characters`),
+        displayName: z.string().min(2, 'Display name must be at least 2 characters').optional(),
+      });
+
+      const validation = dynamicAuthSchema.safeParse({
         email,
         password,
         displayName: isLogin ? undefined : displayName,
@@ -329,27 +377,29 @@ const Auth = () => {
             </Button>
           </form>
 
-          <div className="relative mt-6 mb-6">
-            <div className="absolute inset-0 flex items-center">
-              <Separator />
-            </div>
-            <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-card px-2 text-muted-foreground">Or continue with</span>
-            </div>
-          </div>
-
           {/* OAuth Buttons - Inline */}
-          <div className="grid grid-cols-2 gap-3 mb-6">
-            <Button
-              type="button"
-              variant="outline"
-              className="w-full gap-2"
-              onClick={() => {
-                setOauthLoading('google');
-                signInWithOAuth('google');
-              }}
-              disabled={loading || oauthLoading !== null}
-            >
+          {(authSettings.oauthGoogleEnabled || authSettings.oauthGithubEnabled) && (
+            <>
+              <div className="relative mt-6 mb-6">
+                <div className="absolute inset-0 flex items-center">
+                  <Separator />
+                </div>
+                <div className="relative flex justify-center text-xs uppercase">
+                  <span className="bg-card px-2 text-muted-foreground">Or continue with</span>
+                </div>
+              </div>
+            <div className="grid grid-cols-2 gap-3 mb-6">
+              {authSettings.oauthGoogleEnabled && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full gap-2"
+                  onClick={() => {
+                    setOauthLoading('google');
+                    signInWithOAuth('google');
+                  }}
+                  disabled={loading || oauthLoading !== null}
+                >
               {oauthLoading === 'google' ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
               ) : (
@@ -373,18 +423,20 @@ const Auth = () => {
                 </svg>
               )}
               <span className="hidden sm:inline">Google</span>
-            </Button>
+                </Button>
+              )}
 
-            <Button
-              type="button"
-              variant="outline"
-              className="w-full gap-2"
-              onClick={() => {
-                setOauthLoading('github');
-                signInWithOAuth('github');
-              }}
-              disabled={loading || oauthLoading !== null}
-            >
+              {authSettings.oauthGithubEnabled && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full gap-2"
+                  onClick={() => {
+                    setOauthLoading('github');
+                    signInWithOAuth('github');
+                  }}
+                  disabled={loading || oauthLoading !== null}
+                >
               {oauthLoading === 'github' ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
               ) : (
@@ -396,19 +448,24 @@ const Auth = () => {
                   />
                 </svg>
               )}
-              <span className="hidden sm:inline">GitHub</span>
-            </Button>
-          </div>
+                  <span className="hidden sm:inline">GitHub</span>
+                </Button>
+              )}
+            </div>
+            </>
+          )}
 
-          <div className="text-center">
-            <button
-              type="button"
-              onClick={() => setIsLogin(!isLogin)}
-              className="text-sm text-primary hover:underline"
-            >
-              {isLogin ? "Don't have an account? Sign up" : 'Already have an account? Sign in'}
-            </button>
-          </div>
+          {authSettings.signupEnabled && (
+            <div className="text-center">
+              <button
+                type="button"
+                onClick={() => setIsLogin(!isLogin)}
+                className="text-sm text-primary hover:underline"
+              >
+                {isLogin ? "Don't have an account? Sign up" : 'Already have an account? Sign in'}
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

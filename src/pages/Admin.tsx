@@ -942,7 +942,12 @@ const Admin = () => {
           {/* Questions Tab */}
           <TabsContent value="questions" className="mt-6">
             <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-semibold">Manage Questions</h2>
+              <div>
+                <h2 className="text-xl font-semibold">Manage Questions</h2>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Add and manage quiz questions for Plugin Developer and Theme Developer quizzes
+                </p>
+              </div>
               <Dialog open={dialogOpen} onOpenChange={(open) => {
                 setDialogOpen(open);
                 if (!open) resetForm();
@@ -961,9 +966,21 @@ const Admin = () => {
                   </DialogHeader>
 
                   <div className="space-y-4 mt-4">
+                    <div className="bg-primary/5 border border-primary/20 rounded-lg p-4 mb-4">
+                      <p className="text-sm font-medium text-foreground mb-2 flex items-center gap-2">
+                        <Puzzle className="w-4 h-4" />
+                        Quiz Type Selection
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Select whether this question is for Plugin Developer or Theme Developer quiz
+                      </p>
+                    </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div>
-                        <Label>Quiz Type</Label>
+                        <Label className="flex items-center gap-2">
+                          Quiz Type
+                          <span className="text-destructive">*</span>
+                        </Label>
                         <Select value={formQuizType} onValueChange={(v) => setFormQuizType(v as QuizType)}>
                           <SelectTrigger className="mt-1">
                             <SelectValue />
@@ -973,6 +990,19 @@ const Admin = () => {
                             <SelectItem value="theme">Theme Developer</SelectItem>
                           </SelectContent>
                         </Select>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {formQuizType === 'plugin' ? (
+                            <span className="flex items-center gap-1">
+                              <Puzzle className="w-3 h-3" />
+                              This question will be added to the Plugin Developer quiz
+                            </span>
+                          ) : (
+                            <span className="flex items-center gap-1">
+                              <Palette className="w-3 h-3" />
+                              This question will be added to the Theme Developer quiz
+                            </span>
+                          )}
+                        </p>
                       </div>
 
                       <div>
@@ -1183,7 +1213,7 @@ const Admin = () => {
                 <div>
                   <Label htmlFor="duration" className="flex items-center gap-2 mb-2">
                     <Clock className="w-4 h-4" />
-                    Quiz Duration (minutes)
+                    Interview Time Duration (minutes)
                   </Label>
                   <div className="flex items-center gap-4">
                     <Input
@@ -1201,7 +1231,7 @@ const Admin = () => {
                     </Button>
                   </div>
                   <p className="text-sm text-muted-foreground mt-2">
-                    Set the time limit for quiz completion (1-120 minutes)
+                    Set the interview time limit for quiz completion (1-120 minutes). This applies to both Plugin and Theme quizzes.
                   </p>
                 </div>
 
@@ -1542,7 +1572,10 @@ const Admin = () => {
                         {formatTime(result.time_taken_seconds)}
                       </div>
                       <div className="col-span-1 text-xs text-muted-foreground">
-                        {new Date(result.completed_at).toLocaleDateString()}
+                        {result.completed_at ? (() => {
+                          const date = new Date(result.completed_at);
+                          return isNaN(date.getTime()) ? 'N/A' : date.toLocaleDateString();
+                        })() : 'N/A'}
                       </div>
                     </div>
                   ))}

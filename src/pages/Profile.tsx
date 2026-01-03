@@ -266,15 +266,17 @@ const Profile = () => {
                   <div className="flex-1">
                     <p className="text-sm font-medium">Member Since</p>
                     <p className="text-sm text-muted-foreground">
-                      {profile?.created_at ? new Date(profile.created_at).toLocaleDateString('en-US', {
-                        year: 'numeric',
-                        month: 'long',
-                        day: 'numeric',
-                      }) : new Date(user.created_at).toLocaleDateString('en-US', {
-                        year: 'numeric',
-                        month: 'long',
-                        day: 'numeric',
-                      })}
+                      {(() => {
+                        const dateStr = profile?.created_at || user.created_at;
+                        if (!dateStr) return 'N/A';
+                        const date = new Date(dateStr);
+                        if (isNaN(date.getTime())) return 'N/A';
+                        return date.toLocaleDateString('en-US', {
+                          year: 'numeric',
+                          month: 'long',
+                          day: 'numeric',
+                        });
+                      })()}
                     </p>
                   </div>
                 </div>

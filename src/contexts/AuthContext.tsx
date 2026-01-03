@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { authAPI } from '@/lib/api';
-import { isAdminSecretKey } from '@/constants/admin';
+import { isAdminSecretKey, isAdminEmail } from '@/constants/admin';
 import { toast } from 'sonner';
 
 interface User {
@@ -52,18 +52,20 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       try {
         // Decode JWT token to get user info (simple decode, not verified)
         const payload = JSON.parse(atob(token.split('.')[1]));
+        const isAdminByEmail = isAdminEmail(payload.email);
+        const isAdminByToken = payload.isAdmin || false;
         const userData = {
           id: payload.userId,
           email: payload.email,
           displayName: payload.displayName,
-          isAdmin: payload.isAdmin || false,
+          isAdmin: isAdminByToken || isAdminByEmail,
         };
         setUser(userData);
-        setIsAdmin(payload.isAdmin || false);
+        setIsAdmin(isAdminByToken || isAdminByEmail);
         setSession({ token });
         
         // Check if user is blocked
-        if (userData.id && !payload.isAdmin) {
+        if (userData.id && !userData.isAdmin) {
           checkBlockedStatus(userData.id);
         }
       } catch (error) {

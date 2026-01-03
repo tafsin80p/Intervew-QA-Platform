@@ -1,7 +1,7 @@
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { ThemeToggle } from '@/components/ThemeToggle';
-import { Home, Trophy, Settings, LogIn, User, LogOut, UserCircle } from 'lucide-react';
+import { Home, Settings, LogIn, User, LogOut, UserCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -47,21 +47,6 @@ export const BottomNav = () => {
             )}
           >
             <Home className="h-5 w-5" />
-          </Button>
-
-          {/* Leaderboard */}
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => navigate('/leaderboard')}
-            className={cn(
-              "h-12 w-12 rounded-full transition-all",
-              isActive('/leaderboard') 
-                ? "bg-primary text-primary-foreground" 
-                : "text-muted-foreground hover:text-foreground hover:bg-secondary"
-            )}
-          >
-            <Trophy className="h-5 w-5" />
           </Button>
 
           {/* Admin (only if admin) */}

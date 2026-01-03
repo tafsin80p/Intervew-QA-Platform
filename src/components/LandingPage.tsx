@@ -15,7 +15,6 @@ import {
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase, isSupabaseConfigured } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 
 export type QuizType = 'plugin' | 'theme';
@@ -31,8 +30,6 @@ interface LandingPageProps {
 export const LandingPage = ({ onStart, pluginQuestionCount, themeQuestionCount, timeLimit }: LandingPageProps) => {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [logoUrl, setLogoUrl] = useState<string | null>(null);
-  const [logoLoading, setLogoLoading] = useState(true);
 
   const handleStartQuiz = (type: QuizType, difficulty: DifficultyLevel) => {
     // Require login to start quiz
@@ -48,32 +45,6 @@ export const LandingPage = ({ onStart, pluginQuestionCount, themeQuestionCount, 
     onStart(type, difficulty);
   };
 
-  useEffect(() => {
-    const fetchLogo = async () => {
-      if (!isSupabaseConfigured) {
-        setLogoLoading(false);
-        return;
-      }
-
-      try {
-        const { data, error } = await supabase
-          .from('quiz_settings' as never)
-          .select('setting_value')
-          .eq('setting_key', 'landing_logo_url')
-          .single() as { data: { setting_value: string } | null; error: unknown };
-
-        if (!error && data && data.setting_value) {
-          setLogoUrl(data.setting_value);
-        }
-      } catch (err) {
-        console.error('Error fetching logo:', err);
-      } finally {
-        setLogoLoading(false);
-      }
-    };
-
-    fetchLogo();
-  }, []);
 
   const rules = [
     {
@@ -106,29 +77,16 @@ export const LandingPage = ({ onStart, pluginQuestionCount, themeQuestionCount, 
 
         {/* Header */}
         <div className="text-center mb-10">
-          <div className="flex justify-center mb-6">
-            <div className="relative">
-              {logoLoading ? (
-                <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-primary to-accent flex items-center justify-center animate-pulse">
-                  <Code2 className="w-10 h-10 text-primary-foreground" />
-                </div>
-              ) : logoUrl ? (
-                <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-primary to-accent flex items-center justify-center overflow-hidden">
-                  <img
-                    src={logoUrl}
-                    alt="WordPress Quiz Logo"
-                    className="w-full h-full object-contain p-2"
-                    onError={() => {
-                      // Fallback to default icon if image fails to load
-                      setLogoUrl(null);
-                    }}
-                  />
-                </div>
-              ) : (
-                <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-primary to-accent flex items-center justify-center animate-pulse-glow">
-                  <Code2 className="w-10 h-10 text-primary-foreground" />
-                </div>
-              )}
+          <div className="flex justify-center mb-10">
+            <div className="relative bg-transparent dark:bg-white/90 dark:rounded-lg dark:p-4 dark:shadow-lg">
+              <img
+                src="/Softvence-Omega-Logo.png"
+                alt="Softvence Logo"
+                className="h-20 w-auto object-contain bg-transparent"
+                onError={(e) => {
+                  console.error('Failed to load logo:', e);
+                }}
+              />
             </div>
           </div>
 

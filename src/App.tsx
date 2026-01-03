@@ -11,7 +11,6 @@ import Index from "./pages/Index";
 import AuthPage from "./pages/Auth";
 import Admin from "./pages/Admin";
 import AdminFirestore from "./pages/AdminFirestore";
-import Leaderboard from "./pages/Leaderboard";
 import Profile from "./pages/Profile";
 import NotFound from "./pages/NotFound";
 
@@ -43,7 +42,6 @@ const AppRoutes = () => {
         <Route path="/login" element={<AuthPage />} />
         <Route path="/admin" element={<AdminFirestore />} />
         <Route path="/admin-old" element={<Admin />} />
-        <Route path="/leaderboard" element={<Leaderboard />} />
         <Route path="/profile" element={<Profile />} />
         <Route path="*" element={<NotFound />} />
       </Routes>

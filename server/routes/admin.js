@@ -1,5 +1,5 @@
 import express from 'express';
-import { db, dbAll, dbRun } from '../database.js';
+import { db, dbAll, dbRun, dbGet } from '../database.js';
 import { verifyToken, verifyAdmin } from './auth.js';
 
 const router = express.Router();
@@ -38,41 +38,54 @@ router.get('/users', verifyToken, verifyAdmin, async (req, res) => {
       });
     });
 
-    // Then update with quiz data
-    for (const result of allResults) {
+    // Group results by user_id to determine quiz types
+    const resultsByUser = new Map();
+    allResults.forEach((result) => {
       const userId = result.user_id;
-      if (!userId) continue;
-
-      const existingUser = userMap.get(userId);
-      const resultDate = new Date(result.completed_at);
-      const existingDate = existingUser?.completedAt ? new Date(existingUser.completedAt) : null;
-
-      // If user doesn't exist or this result is newer, update the user
-      if (!existingUser || !existingDate || resultDate > existingDate) {
-        // Determine quiz types for this user
-        const userResults = allResults.filter(r => r.user_id === userId);
-        const hasPlugin = userResults.some(r => r.quiz_type === 'plugin');
-        const hasTheme = userResults.some(r => r.quiz_type === 'theme');
-        const quizType = hasPlugin && hasTheme ? 'both' : hasPlugin ? 'plugin' : 'theme';
-
-        const user = await dbGet(db, 'SELECT is_blocked, warning_count, quiz_restart_count, blocked_reason, blocked_at FROM users WHERE id = ?', [userId]);
-
-        userMap.set(userId, {
-          id: userId,
-          name: result.user_name || result.user_email?.split('@')[0] || 'User',
-          email: result.user_email,
-          status: result.status || 'pending',
-          quizType: quizType,
-          score: Math.round((result.score / result.total_questions) * 100),
-          completedAt: result.completed_at,
-          latestQuizId: result.id,
-          isBlocked: user?.is_blocked === 1,
-          warningCount: user?.warning_count || 0,
-          restartCount: user?.quiz_restart_count || 0,
-          blockedReason: user?.blocked_reason,
-          blockedAt: user?.blocked_at,
-        });
+      if (!userId) return;
+      
+      if (!resultsByUser.has(userId)) {
+        resultsByUser.set(userId, []);
       }
+      resultsByUser.get(userId).push(result);
+    });
+
+    // Update users with quiz data
+    for (const [userId, userResults] of resultsByUser.entries()) {
+      // Find the latest result
+      const latestResult = userResults.reduce((latest, current) => {
+        const currentDate = new Date(current.completed_at);
+        const latestDate = latest ? new Date(latest.completed_at) : null;
+        return !latestDate || currentDate > latestDate ? current : latest;
+      }, null);
+
+      if (!latestResult) continue;
+
+      // Determine quiz types for this user
+      const hasPlugin = userResults.some(r => r.quiz_type === 'plugin');
+      const hasTheme = userResults.some(r => r.quiz_type === 'theme');
+      const quizType = hasPlugin && hasTheme ? 'both' : hasPlugin ? 'plugin' : hasTheme ? 'theme' : null;
+
+      const user = dbGet(db, 'SELECT is_blocked, warning_count, quiz_restart_count, blocked_reason, blocked_at FROM users WHERE id = ?', [userId]);
+
+      // Get user info from existing map or from latest result
+      const existingUser = userMap.get(userId);
+      
+      userMap.set(userId, {
+        id: userId,
+        name: latestResult.user_name || existingUser?.name || latestResult.user_email?.split('@')[0] || 'User',
+        email: existingUser?.email || latestResult.user_email,
+        status: latestResult.status || 'pending',
+        quizType: quizType,
+        score: Math.round((latestResult.score / latestResult.total_questions) * 100),
+        completedAt: latestResult.completed_at,
+        latestQuizId: latestResult.id,
+        isBlocked: user?.is_blocked === 1,
+        warningCount: user?.warning_count || 0,
+        restartCount: user?.quiz_restart_count || 0,
+        blockedReason: user?.blocked_reason,
+        blockedAt: user?.blocked_at,
+      });
     }
 
     const usersList = Array.from(userMap.values());
@@ -154,7 +167,7 @@ router.get('/users/:userId/warnings', verifyToken, async (req, res) => {
       return res.status(403).json({ error: 'Access denied' });
     }
 
-    const user = await dbGet(db, 'SELECT warning_count, is_blocked FROM users WHERE id = ?', [userId]);
+    const user = dbGet(db, 'SELECT warning_count, is_blocked FROM users WHERE id = ?', [userId]);
 
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
@@ -259,7 +272,7 @@ router.get('/users/:userId/restarts', verifyToken, async (req, res) => {
       return res.status(403).json({ error: 'Access denied' });
     }
 
-    const user = await dbGet(db, 'SELECT quiz_restart_count, is_blocked FROM users WHERE id = ?', [userId]);
+    const user = dbGet(db, 'SELECT quiz_restart_count, is_blocked FROM users WHERE id = ?', [userId]);
 
     if (!user) {
       return res.status(404).json({ error: 'User not found' });

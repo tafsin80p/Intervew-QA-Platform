@@ -9,6 +9,7 @@ import { ResultsPage } from '@/components/ResultsPage';
 import { useAntiCheat } from '@/hooks/useAntiCheat';
 import { useAuth } from '@/contexts/AuthContext';
 import { quizAPI, adminAPI, authAPI } from '@/lib/api';
+import { supabase, isSupabaseConfigured } from '@/integrations/supabase/client';
 import { wordpressQuestions } from '@/data/questions';
 import { themeQuestions } from '@/data/themeQuestions';
 import { Question } from '@/data/questions';
