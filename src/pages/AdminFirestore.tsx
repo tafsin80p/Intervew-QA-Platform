@@ -644,23 +644,40 @@ const AdminFirestore = () => {
       ];
 
       const results = await Promise.all(
-        settingsToSave.map(setting =>
-          supabase.from('quiz_settings' as never).upsert({
-            setting_key: setting.key,
-            setting_value: setting.value,
-          } as never)
-        )
+        settingsToSave.map(async (setting) => {
+          try {
+            const { data, error } = await supabase
+              .from('quiz_settings' as never)
+              .upsert({
+                setting_key: setting.key,
+                setting_value: setting.value || '',
+              } as never);
+            
+            if (error) {
+              console.error(`Error saving ${setting.key}:`, error);
+              return { error, key: setting.key };
+            }
+            return { data, error: null, key: setting.key };
+          } catch (err) {
+            console.error(`Exception saving ${setting.key}:`, err);
+            return { error: err as Error, key: setting.key };
+          }
+        })
       );
 
-      const hasError = results.some(result => result.error);
-      if (hasError) {
-        toast.error('Failed to save some settings');
+      const errors = results.filter(result => result.error);
+      if (errors.length > 0) {
+        console.error('Failed to save settings:', errors);
+        const firstError = errors[0];
+        const errorMessage = firstError.error?.message || 'Unknown error';
+        toast.error(`Failed to save settings: ${errorMessage}. Check console for details.`);
       } else {
         toast.success('Auth settings saved successfully!');
       }
     } catch (err) {
       console.error('Error saving auth settings:', err);
-      toast.error('Failed to save auth settings');
+      const error = err as Error;
+      toast.error(`Failed to save auth settings: ${error.message || 'Unknown error'}`);
     }
 
     setSavingAuthSettings(false);
